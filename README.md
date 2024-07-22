@@ -11,8 +11,8 @@ In diesem Wiki findest du alle Weiterleitungen zu den Informationen, Änderungen
 
 Event-Organisations-Tool
 
-{% content-ref url="http://127.0.0.1:5000/o/rAVzqPTHxgImNPmrnsPZ/s/-MkchrK55Ivg9XEj2IJU/" %}
-[Deutsch](http://127.0.0.1:5000/o/rAVzqPTHxgImNPmrnsPZ/s/-MkchrK55Ivg9XEj2IJU/)
+{% content-ref url="https://app.gitbook.com/o/rAVzqPTHxgImNPmrnsPZ/s/-MkchrK55Ivg9XEj2IJU/" %}
+[Deutsch](https://app.gitbook.com/o/rAVzqPTHxgImNPmrnsPZ/s/-MkchrK55Ivg9XEj2IJU/)
 {% endcontent-ref %}
 
 Discord Bot mit allgemein nützlichen Features, die keinen persistenten Speicher benötigen.
