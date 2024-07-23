@@ -16,7 +16,7 @@ Frontend: React, react-router-dom, axios, @tanstack/react-query
 
 
 
-## OAuth2 configuration
+## OAuth2 Configuration
 
 A great place to start is the official spring guide: [https://spring.io/guides/tutorials/spring-boot-oauth2](https://spring.io/guides/tutorials/spring-boot-oauth2)
 
@@ -183,7 +183,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
 {% endcode %}
 
 {% hint style="danger" %}
-I'm not sure if this is really required. Looking at my production setup, I forgot to configure this, but things still work. Need to check again.
+I'm not sure if this is really required. Looking at my production setup, I forgot to configure this, but things still work. Maybe only in dev setup, need to check again.
 {% endhint %}
 
 ### Recommended optionals
@@ -289,7 +289,7 @@ public class SessionRegistrator {
 
 ## Starting the login process
 
-To force a session to be created, we create an endpoint that requires authentication. We'll use the `@PreAuthorize` method to do this. Remember to add `@EnableMethodSecurity` to your Spring Boot Application class to enable its use.
+While Spring already provides a [default login page](https://docs.spring.io/spring-security/reference/servlet/oauth2/login/advanced.html#oauth2login-advanced-login-page), we support the user with some nice to have features. To force a session to be created, we create an endpoint that requires authentication. We'll use the `@PreAuthorize` method to do this. Remember to add `@EnableMethodSecurity` to your Spring Boot Application class to enable its use.
 
 ```java
 @Controller
@@ -305,6 +305,8 @@ public class LoginWebController {
 	}
 }
 ```
+
+We create the endpoint in a way that allows us to redirect to any page after the OAuth flow is complete. Since we are leaving our frontend while redirecting to the external provider, we need a way to get back to the page the user had opened. This is particularly useful if there is a login button in a header and we don't want the user to always restart their journey at the defaultSuccessUrl.
 
 ```java
 public interface RedirectService {
@@ -333,6 +335,8 @@ public class RedirectServiceImpl implements RedirectService {
 }
 ```
 
+To avoid an [Open Redirect vulnerability](https://learn.snyk.io/lesson/open-redirect/), we'll build the URL from the current request. We remove the servletContextPath (`/backend` if you're following the setup we'll add later) and append the passed redirectPath. This may have been tampered with, but as it's only on the same domain, we're mostly safe.
+
 ```java
 @Service
 @Profile("dev")
@@ -349,7 +353,11 @@ public class RedirectServiceDevImpl implements RedirectService {
 }
 ```
 
-But how do we get back to our spa? Remember the login and logout success urls? Now let's create the controller for that.
+The only difference for dev mode is the addition of the frontend port, since we won't be serving it locally from the same domain and port combination.
+
+## From Spring View to SPA
+
+But how do we get back to our spa when the defaultSuccessUrl or logoutSuccessUrl is opened? Now let's create the controller to do this.
 
 ```java
 @Controller
@@ -358,17 +366,19 @@ public class RedirectController {
 	private final RedirectService redirectService;
 
 	@GetMapping("/startpage") //OAuth2EndpointConfig logoutSuccessUrl
-	public RedirectView redirectToEvents() {
+	public RedirectView redirectToStartpage() {
 		return new RedirectView(redirectService.redirectTo("/startpage"));
 	}
 }
 ```
 
+We'll use the same redirect logic we built for the login endpoint to redirect to a specific frontend URL. This doesn't have to be the same path, or your redirectService may use some special mapping logic to get the spa routes.
 
 
-## Routing
 
-The entry point to our single page application is the router. This is where we specify which urls will display which components in the browser.
+## Frontend Routing
+
+The entry point to our single page application is the router. This is where we specify which urls will display which components in the browser. It will include the route we specified in the RedirectController.
 
 ```tsx
 const routes: RoutesObject[] = [
@@ -405,13 +415,57 @@ Usage example: [Router](https://github.com/Alf-Melmac/slotbot-frontend/blob/deve
 
 </details>
 
+## API Resolver
 
+To access the backend API through the user's browser, we need a similar URL resolver to the RedirectService.
 
+```typescript
+export function getBackendUrl(): string {
+	let hostname = window.location.hostname;
+	if (import.meta.env.DEV) {
+		hostname = `${hostname}:8080`;
+	}
+	return `${window.location.protocol}//${hostname}/backend`;
+}
 
+```
 
-{% hint style="warning" %}
-It's getting late and I'll continue this. Everything below this is just a code dump for now.
-{% endhint %}
+This directly matches our spring application's additional configuration. Again, in dev mode, we need to set the port.
+
+{% code title="application.properties" %}
+```properties
+server.port=8080
+server.servlet.context-path=/backend
+```
+{% endcode %}
+
+To make things easier, we'll use this backend API URL directly as the base URL for every axios request.
+
+```typescript
+const backendClient = axios.create({
+	baseURL: getBackendUrl(),
+	withCredentials: import.meta.env.DEV ? true : undefined,
+	withXSRFToken: import.meta.env.DEV ? true : undefined,
+});
+```
+
+While the Cookies are automatically added to the requests if we're on the same domain-port-pair, you already know it, in dev mode we force axios to send it in every request. This only works if the `Access-Control-Allow-Origin` and `Access-Control-Allow-Credentials` headers are sent (Reference `WebMvcConfig.java`).
+
+## Login and Logout
+
+```typescript
+window.location.href = `${getBackendUrl()}/login?redirectUrl=${window.location.pathname}`;
+
+window.location.href = `${getBackendUrl()}/logout
+```
+
+That's it! Bind them to any click listener on a button you want, and the backend will automatically set all the necessary cookies and axios will pick them up.
+
+<details>
+
+<summary>In a context</summary>
+
+You may want to access the logged-in user in multiple places, or provide multiple login/logout buttons. That's where an auth context can help.
 
 ```tsx
 export function AuthProvider(props: Readonly<PropsWithChildren>): JSX.Element {
@@ -436,14 +490,6 @@ export function AuthProvider(props: Readonly<PropsWithChildren>): JSX.Element {
 	return <AuthContext.Provider value={value}>{props.children}</AuthContext.Provider>;
 }
 
-function getBackendUrl(): string {
-	let hostname = window.location.hostname;
-	if (import.meta.env.DEV) {
-		hostname = `${hostname}:8090`;
-	}
-	return `${window.location.protocol}//${hostname}/backend`;
-}
-
 interface DiscordUserDto {
 	id: string;
 	name: string;
@@ -463,15 +509,69 @@ export function useAuth() {
 }
 ```
 
-Wrap the Router with the AuthProvider. Login and logout can be used as onClick methods on buttons.
+Wrap the Router with the AuthProvider and start using it.
+
+</details>
+
+## Using the session
+
+### Who is logged in
+
+```java
+@RestController
+@RequestMapping("/authentication")
+public class AuthenticationController {
+	@GetMapping
+	public DiscordUserDto getAuthenticatedUser(@AuthenticationPrincipal OAuth2User oAuth2User) {
+		return DiscordUserAssembler.toDto(oAuth2User);
+	}
+}
+```
+
+With the `@AuthenticationPrincipal` we can inject the currently active user principal. With this representation, we can provide information that should be publicly available on the front end. The attribute names are not standardised and will vary between different providers. (This is the endpoint that is used for the Login and Logout context)
+
+In static methods, you can access the security context to get the currently logged in user:
+
+```java
+final Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+if (principal instanceof OAuth2User oAuth2User) {
+	return oAuth2User;
+}
+```
+
+### Require authentication on a route
+
+```tsx
+export function RequireAuth(props: Readonly<{children: ReactNode}>): JSX.Element {
+	const {children} = props;
+
+	const {user, login} = useAuth();
+
+	if (user === undefined) return <></>;
+
+	return <>
+		{user ?
+			children
+			:
+			<OnMount do={login}/>
+		}
+	</>;
+}
+
+type RedirectProps = {
+	do: () => void;
+};
+
+function OnMount(props: Readonly<RedirectProps>): JSX.Element {
+	useEffect(() => {
+		props.do();
+	}, []);
+
+	return <></>;
+}
+```
 
 
-
-Axios instance creation: [https://github.com/Alf-Melmac/slotbot-frontend/blob/develop/src/hooks/slotbotServerClient.ts](https://github.com/Alf-Melmac/slotbot-frontend/blob/develop/src/hooks/slotbotServerClient.ts)
-
-
-
-RequireAuth for a specific route: [https://github.com/Alf-Melmac/slotbot-frontend/blob/develop/src/contexts/authentication/RequireAuth.tsx](https://github.com/Alf-Melmac/slotbot-frontend/blob/develop/src/contexts/authentication/RequireAuth.tsx)
 
 ## Nginx setup
 
@@ -500,4 +600,25 @@ server {
 }
 ```
 
-This will serve the frontend at `example.com` and the backend at `example.com/backend`.
+This will serve the frontend at `example.com` and the backend at `example.com/backend`, just like we configured in the servlet context path.
+
+
+
+## Summary
+
+We've created a Spring Boot backend that handles authentication with an OAuth2 provider. For login and logout, the user is redirected to the Spring Boot application. The session is maintained by the server-side backend and sends all the necessary information to the client browser, just as you would with any database information.
+
+### Login-Flow
+
+1. Browsing the page at `example.de` and clicking on login
+2. `example.de/backend/login` (which requires authorization and therefore redirects)
+3. `example.de/backend/oauth2/authorization/discord` (starts the authorization process)
+4. `discord.com/oauth2/authorize`
+5. `example.de/backend/login/oauth2/code/discord` (callback with oauth code)
+6. `example.de/backend/login` (back to the starting point)
+
+### Logout-Flow
+
+1. Browsing the page at `example.de` and clicking on logout
+2. `example.de/backend/logout` (Does the Front-Channel logout)
+3. Redirect to the logoutSuccessUrl
