@@ -83,9 +83,6 @@ public class OAuth2EndpointConfig {
 			.oauth2Login(login -> login
 				.loginPage("/oauth2/authorization/discord")
 				.defaultSuccessUrl("/startpage")
-				.tokenEndpoint(tokenEndpoint -> tokenEndpoint
-						.accessTokenResponseClient(accessTokenResponseClient())
-				)
 				.userInfoEndpoint(userInfo -> userInfo
 						.userService(oAuthUserService())
 				)
@@ -100,41 +97,8 @@ public class OAuth2EndpointConfig {
 	}
 
 	@Bean
-	OAuth2AccessTokenResponseClient<OAuth2AuthorizationCodeGrantRequest> accessTokenResponseClient() {
-		DefaultAuthorizationCodeTokenResponseClient client = new DefaultAuthorizationCodeTokenResponseClient();
-
-		client.setRequestEntityConverter(new OAuth2AuthorizationCodeGrantRequestEntityConverter() {
-			@Override
-			public RequestEntity<?> convert(OAuth2AuthorizationCodeGrantRequest oauth2Request) {
-				return withUserAgent(Objects.requireNonNull(super.convert(oauth2Request)));
-			}
-		});
-
-		return client;
-	}
-
-	@Bean
 	OAuth2UserService<OAuth2UserRequest, OAuth2User> oAuthUserService() {
-		DefaultOAuth2UserService service = new CustomOAuth2UserService(guildUsersService, userService);
-
-		service.setRequestEntityConverter(new OAuth2UserRequestEntityConverter() {
-			@Override
-			public RequestEntity<?> convert(OAuth2UserRequest userRequest) {
-				return withUserAgent(Objects.requireNonNull(super.convert(userRequest)));
-			}
-		});
-
-		return service;
-	}
-
-	private static final String DISCORD_BOT_USER_AGENT = "Discord-OAuth";
-
-	private static RequestEntity<?> withUserAgent(RequestEntity<?> request) {
-		HttpHeaders headers = new HttpHeaders();
-		headers.putAll(request.getHeaders());
-		headers.add(HttpHeaders.USER_AGENT, DISCORD_BOT_USER_AGENT);
-
-		return new RequestEntity<>(request.getBody(), headers, request.getMethod(), request.getUrl());
+		return new CustomOAuth2UserService(guildUsersService, userService);
 	}
 }
 ```
@@ -147,26 +111,15 @@ public class OAuth2EndpointConfig {
 2. L17: Configure the login process.
    1. L18: Specify the URL to send users to when login is required.
    2. L19: As with logout, the user will be redirected to this endpoint upon successful login.
-3. L20: Discord requires a `Discord-OAuth` `User-Agent` header at the token and user info endpoints. Configure in accordance with the OAuth provider (see `#withUserAgent`).
-4. L23: This is where the OAuth user request is consumed. This step creates the `OAuth2User` from the data returned by the provider after login. For example, creating the user if it doesn't already exist in the database and granting authorities. To make things easier, I've excluded the `CustomOauth2UserService` here. You may reference the original [here](https://github.com/Alf-Melmac/slotbotServer/blob/develop/src/main/java/de/webalf/slotbot/configuration/authentication/website/CustomOAuth2UserService.java).
+3. L20: This is where the OAuth user request is consumed. This step creates the `OAuth2User` from the data returned by the provider after login. For example, creating the user if it doesn't already exist in the database and granting authorities. To make things easier, I've excluded the `CustomOauth2UserService` here. You may reference the original [here](https://github.com/Alf-Melmac/slotbotServer/blob/develop/src/main/java/de/webalf/slotbot/configuration/authentication/website/CustomOAuth2UserService.java).
 
 ### CORS
-
-<pre class="language-java" data-title="OAuth2EndpointConfig.java"><code class="lang-java">@Bean
-SecurityFilterChain oAuthUserFilterChain(HttpSecurity http) throws Exception {
-	[...]
-	http.
-<strong>		.cors(withDefaults())
-</strong>	[...]
-}
-</code></pre>
-
-Apply the default Spring CORS filter.
 
 {% code title="WebMvcConfig.java" %}
 ```java
 @Configuration
 @RequiredArgsConstructor
+@Profile("dev")
 public class WebMvcConfig implements WebMvcConfigurer {
 	@Value("${server.cors.allowed-origins}")
 	private String[] allowedOrigins;
@@ -182,9 +135,13 @@ public class WebMvcConfig implements WebMvcConfigurer {
 ```
 {% endcode %}
 
-{% hint style="danger" %}
-I'm not sure if this is really required. Looking at my production setup, I forgot to configure this, but things still work. Maybe only in dev setup, need to check again.
-{% endhint %}
+Spring Security automatically uses the Spring MVC CORS config. In dev mode we need to allow a different origin to allow the requests from the frontend. In production, this isn't an issue as both applications are deployed behind the same URL.
+
+{% code title="application.properties" %}
+```properties
+server.cors.allowed-origins=http://localhost:3000
+```
+{% endcode %}
 
 ### Recommended optionals
 
